@@ -4,74 +4,66 @@ import com.ecwid.consul.v1.ConsulClient;
 import com.ecwid.consul.v1.Response;
 import com.ecwid.consul.v1.catalog.model.CatalogService;
 import com.ecwid.consul.v1.kv.model.GetValue;
-import com.google.common.base.Splitter;
 import org.apache.cassandra.locator.SeedProvider;
-import org.apache.commons.collections4.CollectionUtils;
-import org.apache.commons.lang3.BooleanUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.net.InetAddress;
+import java.net.MalformedURLException;
 import java.net.URL;
 import java.net.UnknownHostException;
 import java.util.*;
 
 public class ConsulSeedProvider implements SeedProvider {
-
     private static final Logger logger = LoggerFactory.getLogger(ConsulSeedProvider.class);
 
-    private ConsulClient client;
-
-    private URL consul_url;
-    private Boolean consul_use_kv;
-    private String consul_kv_prefix;
-    private String consul_service_name;
-    private Collection<String> consul_service_tags;
-    private List<InetAddress> default_seeds;
+    private URL consulUrl;
+    private Boolean consulUseKv;
+    private String consulKvPrefix;
+    private String consulServiceName;
+    private Collection<String> consulServiceTags;
+    private List<InetAddress> defaultSeeds;
 
     public ConsulSeedProvider(Map<String, String> args) {
         // These are used as a fallback if we get nothing from Consul
-        default_seeds = new ArrayList<InetAddress>();
-        String seeds = args.get("seeds");
-        if (seeds != null) {
-            for (String host : Splitter.on(",").trimResults().omitEmptyStrings().split(seeds)) {
-                try {
-                    default_seeds.add(InetAddress.getByName(host));
-                } catch (UnknownHostException ex) {
-                    logger.warn("Seed provider couldn't lookup host " + host);
-                }
+        defaultSeeds = new ArrayList<>();
+        for (String host : split(args.get("seeds"), ",")) {
+            try {
+                defaultSeeds.add(InetAddress.getByName(host));
+            } catch (UnknownHostException ex) {
+                logger.warn("Seed provider couldn't lookup host " + host);
             }
         }
 
         try {
-            consul_url = new URL(System.getProperty("consul.url", "http://localhost:8500/"));
-            consul_use_kv = BooleanUtils.toBoolean(System.getProperty("consul.kv.enabled", "false"), "true", "false");
-            consul_kv_prefix = System.getProperty("consul.kv.prefix", "cassandra/seeds");
-            consul_service_name = System.getProperty("consul.service.name", "cassandra");
-            consul_service_tags = Splitter.on(",").trimResults().omitEmptyStrings().splitToList(System.getProperty("consul.service.tags", ""));
-        } catch (Exception e) {
-            logger.error(e.toString());
+            consulUrl = new URL(System.getProperty("consul.url", "http://localhost:8500/"));
+        } catch (MalformedURLException e) {
+            logger.error("Could not parse consul.url", e);
         }
+        consulUseKv = Boolean.parseBoolean(System.getProperty("consul.kv.enabled", "false"));
+        consulKvPrefix = System.getProperty("consul.kv.prefix", "cassandra/seeds");
+        consulServiceName = System.getProperty("consul.service.name", "cassandra");
+        consulServiceTags = split(System.getProperty("consul.service.tags", ""), ",");
 
-        logger.debug("consul_url {}", consul_url);
-        logger.debug("consul_service_name {}", consul_service_name);
-        logger.debug("consul_service_tags {}", consul_service_tags.toString());
-        logger.debug("consul_service_tags size [{}]", consul_service_tags.size());
-        logger.debug("consul_use_kv {}", consul_use_kv);
-        logger.debug("consul_kv_prefix {}", consul_kv_prefix);
-        logger.debug("default_seeds {}", default_seeds);
+        logger.debug("consulUrl {}", consulUrl);
+        logger.debug("consulServiceName {}", consulServiceName);
+        logger.debug("consulServiceTags {}", consulServiceTags.toString());
+        logger.debug("consulServiceTags size [{}]", consulServiceTags.size());
+        logger.debug("consulUseKv {}", consulUseKv);
+        logger.debug("consulKvPrefix {}", consulKvPrefix);
+        logger.debug("defaultSeeds {}", defaultSeeds);
     }
 
     public List<InetAddress> getSeeds() {
-        client = new ConsulClient(String.format("%s:%s", consul_url.getHost(), consul_url.getPort()));
+        ConsulClient client = new ConsulClient(String.format("%s:%s", consulUrl.getHost(), consulUrl.getPort()));
 
-        List<InetAddress> seeds = new ArrayList<InetAddress>();
+        List<InetAddress> seeds = new ArrayList<>();
 
-        if (consul_use_kv) {
-            Response response = client.getKVValues(consul_kv_prefix);
-            List all = (ArrayList<GetValue>) response.getValue();
+        if (consulUseKv) {
+            Response<List<GetValue>> response = client.getKVValues(consulKvPrefix);
+            List<GetValue> all = response.getValue();
             if (all == null) {
-                return Collections.unmodifiableList(default_seeds);
+                return Collections.unmodifiableList(defaultSeeds);
             }
 
             for (Object gv : all) {
@@ -89,19 +81,19 @@ public class ConsulSeedProvider implements SeedProvider {
             }
 
         } else {
-            Response<List<CatalogService>> response = client.getCatalogService(consul_service_name, null);
+            Response<List<CatalogService>> response = client.getCatalogService(consulServiceName, null);
 
             for (CatalogService svc : response.getValue()) {
                 try {
                     logger.debug("Service [{}]", svc.toString());
 
-                    if (CollectionUtils.isNotEmpty(consul_service_tags)) {
+                    if (!consulServiceTags.isEmpty()) {
                         List<String> stags = svc.getServiceTags();
 
                         logger.debug("Service tagged with {}", stags.toString());
-                        logger.debug("I'm looking for {}", consul_service_tags.toString());
+                        logger.debug("I'm looking for {}", consulServiceTags.toString());
 
-                        if (CollectionUtils.containsAll(stags, consul_service_tags)) {
+                        if (consulServiceTags.containsAll(stags)) {
                             seeds.add(InetAddress.getByName(svc.getServiceAddress()));
                         }
                     } else {
@@ -109,12 +101,29 @@ public class ConsulSeedProvider implements SeedProvider {
                     }
 
                 } catch (Exception e) {
-                    logger.warn("Adding seed {}", e.getMessage());
+                    logger.warn("Error while adding seed " + svc, e);
                 }
             }
         }
-        List<InetAddress> returnedSeeds = !seeds.isEmpty() ? seeds : default_seeds;
-        logger.info("Seeds {}", returnedSeeds.toString());
-        return Collections.unmodifiableList(returnedSeeds);
+        if (seeds.isEmpty()) {
+            seeds = defaultSeeds;
+        }
+        logger.info("Seeds {}", seeds.toString());
+        return Collections.unmodifiableList(seeds);
+    }
+
+    private static ArrayList<String> split(String str, String regex) {
+        ArrayList<String> partsList = new ArrayList<>();
+        if (str == null) {
+            return partsList;
+        }
+        String[] parts = str.split(regex);
+        for (String s : parts) {
+            String trimmed = s.trim();
+            if (!trimmed.isEmpty()) {
+                partsList.add(trimmed);
+            }
+        }
+        return partsList;
     }
 }
