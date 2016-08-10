@@ -17,31 +17,24 @@ import java.util.*;
 public class ConsulSeedProvider implements SeedProvider {
     private static final Logger logger = LoggerFactory.getLogger(ConsulSeedProvider.class);
 
+    private ConsulClient client;
     private URL consulUrl;
-    private Boolean consulUseKv;
-    private String consulKvPrefix;
+    private boolean useKeyValue;
+    private String consulKeyValuePrefix;
     private String consulServiceName;
-    private Collection<String> consulServiceTags;
+    private List<String> consulServiceTags;
     private List<InetAddress> defaultSeeds;
 
-    public ConsulSeedProvider(Map<String, String> args) {
-        // These are used as a fallback if we get nothing from Consul
-        defaultSeeds = new ArrayList<>();
-        for (String host : split(args.get("seeds"), ",")) {
-            try {
-                defaultSeeds.add(InetAddress.getByName(host));
-            } catch (UnknownHostException ex) {
-                logger.warn("Seed provider couldn't lookup host " + host);
-            }
-        }
+    public ConsulSeedProvider(Map<String, String> params) {
+        defaultSeeds = getDefaultSeeds(params);
 
         try {
             consulUrl = new URL(System.getProperty("consul.url", "http://localhost:8500/"));
         } catch (MalformedURLException e) {
             logger.error("Could not parse consul.url", e);
         }
-        consulUseKv = Boolean.parseBoolean(System.getProperty("consul.kv.enabled", "false"));
-        consulKvPrefix = System.getProperty("consul.kv.prefix", "cassandra/seeds");
+        useKeyValue = Boolean.parseBoolean(System.getProperty("consul.kv.enabled", "false"));
+        consulKeyValuePrefix = System.getProperty("consul.kv.prefix", "cassandra/seeds");
         consulServiceName = System.getProperty("consul.service.name", "cassandra");
         consulServiceTags = split(System.getProperty("consul.service.tags", ""), ",");
 
@@ -49,67 +42,95 @@ public class ConsulSeedProvider implements SeedProvider {
         logger.debug("consulServiceName {}", consulServiceName);
         logger.debug("consulServiceTags {}", consulServiceTags.toString());
         logger.debug("consulServiceTags size [{}]", consulServiceTags.size());
-        logger.debug("consulUseKv {}", consulUseKv);
-        logger.debug("consulKvPrefix {}", consulKvPrefix);
+        logger.debug("useKeyValue {}", useKeyValue);
+        logger.debug("consulKeyValuePrefix {}", consulKeyValuePrefix);
         logger.debug("defaultSeeds {}", defaultSeeds);
+
+        client = new ConsulClient(String.format("%s:%s", consulUrl.getHost(), consulUrl.getPort()));
     }
 
+    @Override
     public List<InetAddress> getSeeds() {
-        ConsulClient client = new ConsulClient(String.format("%s:%s", consulUrl.getHost(), consulUrl.getPort()));
-
-        List<InetAddress> seeds = new ArrayList<>();
-
-        if (consulUseKv) {
-            Response<List<GetValue>> response = client.getKVValues(consulKvPrefix);
-            List<GetValue> all = response.getValue();
-            if (all == null) {
-                return Collections.unmodifiableList(defaultSeeds);
-            }
-
-            for (Object gv : all) {
-                logger.info("kv: {}", gv);
-
-                GetValue record = (GetValue) gv;
-                String[] parts = record.getKey().split("/");
-                String host = parts[parts.length - 1];
-
-                try {
-                    seeds.add(InetAddress.getByName(host));
-                } catch (UnknownHostException ex) {
-                    logger.warn("Seed provider couldn't lookup host {}", host);
-                }
-            }
-
-        } else {
-            Response<List<CatalogService>> response = client.getCatalogService(consulServiceName, null);
-
-            for (CatalogService svc : response.getValue()) {
-                try {
-                    logger.debug("Service [{}]", svc.toString());
-
-                    if (!consulServiceTags.isEmpty()) {
-                        List<String> stags = svc.getServiceTags();
-
-                        logger.debug("Service tagged with {}", stags.toString());
-                        logger.debug("I'm looking for {}", consulServiceTags.toString());
-
-                        if (consulServiceTags.containsAll(stags)) {
-                            seeds.add(InetAddress.getByName(svc.getServiceAddress()));
-                        }
-                    } else {
-                        seeds.add(InetAddress.getByName(svc.getServiceAddress()));
-                    }
-
-                } catch (Exception e) {
-                    logger.warn("Error while adding seed " + svc, e);
-                }
-            }
-        }
+        ArrayList<InetAddress> seeds = useKeyValue ? getKeyValueSeeds() : getServiceSeeds();
         if (seeds.isEmpty()) {
-            seeds = defaultSeeds;
+            seeds.addAll(defaultSeeds);
         }
         logger.info("Seeds {}", seeds.toString());
         return Collections.unmodifiableList(seeds);
+    }
+
+    private ArrayList<InetAddress> getKeyValueSeeds() {
+        ArrayList<InetAddress> seeds = new ArrayList<>();
+        Response<List<GetValue>> response = client.getKVValues(consulKeyValuePrefix);
+        if (response.getValue() == null) {
+            return seeds;
+        }
+
+        for (GetValue record : response.getValue()) {
+            logger.debug("kv: {}", record);
+
+            String[] parts = record.getKey().split("/");
+            String host = parts[parts.length - 1];
+
+            InetAddress address = toInetAddress(host);
+            if (address != null) {
+                seeds.add(address);
+            }
+        }
+        return seeds;
+    }
+
+    private ArrayList<InetAddress> getServiceSeeds() {
+        ArrayList<InetAddress> seeds = new ArrayList<>();
+        Response<List<CatalogService>> response = client.getCatalogService(consulServiceName, null);
+        if (response.getValue() == null) {
+            return seeds;
+        }
+
+        for (CatalogService service : response.getValue()) {
+            logger.debug("Service [{}]", service.toString());
+
+            if (!consulServiceTags.isEmpty()) {
+                List<String> serviceTags = service.getServiceTags();
+
+                logger.debug("Service tagged with {}", serviceTags.toString());
+                logger.debug("I'm looking for {}", consulServiceTags.toString());
+
+                if (consulServiceTags.containsAll(serviceTags)) {
+                    InetAddress address = toInetAddress(service.getServiceAddress());
+                    if (address != null) {
+                        seeds.add(address);
+                    }
+                }
+            } else {
+                InetAddress address = toInetAddress(service.getServiceAddress());
+                if (address != null) {
+                    seeds.add(address);
+                }
+            }
+
+        }
+        return seeds;
+    }
+
+    private static ArrayList<InetAddress> getDefaultSeeds(Map<String, String> params) {
+        ArrayList<InetAddress> seeds = new ArrayList<>();
+        for (String host : split(params.get("seeds"), ",")) {
+            InetAddress address = toInetAddress(host);
+            if (address != null) {
+                seeds.add(address);
+            }
+        }
+        return seeds;
+    }
+
+    private static InetAddress toInetAddress(String serviceAddress) {
+        try {
+            return InetAddress.getByName(serviceAddress);
+        } catch (UnknownHostException e) {
+            logger.warn("Error while adding seed " + serviceAddress, e);
+            return null;
+        }
     }
 
     private static ArrayList<String> split(String str, String regex) {
