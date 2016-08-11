@@ -15,11 +15,21 @@ repositories {
   jcenter()
 }
 
+configurations {
+  provided
+}
+
+sourceSets {
+  main {
+    compileClasspath += configurations.provided
+  }
+}
+
 dependencies {
-  compile 'org.apache.cassandra:cassandra-all:3.7'
+  provided 'org.apache.cassandra:cassandra-all:3.7'
   compile 'com.ecwid.consul:consul-api:1.1.9'
   compile 'org.apache.commons:commons-collections4:4.0'
-  compile 'com.google.guava:guava:19.0'
+  provided 'com.google.guava:guava:18.0'
 }
 
 shadowJar {
@@ -27,6 +37,13 @@ shadowJar {
   exclude 'META-INF/*.DSA'
   exclude 'META-INF/*.RSA'
 }
+
+task exportDeps(type: Copy) {
+  into "build/libs"
+  from configurations.compile
+}
+
+jar.dependsOn(exportDeps)
 
 configurations {
   runtime.exclude module: 'logback-core'
