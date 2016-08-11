@@ -27,9 +27,12 @@ sourceSets {
 
 dependencies {
   provided 'org.apache.cassandra:cassandra-all:3.7'
-  compile 'com.ecwid.consul:consul-api:1.1.9'
+  compile('com.ecwid.consul:consul-api:1.1.9') {
+    exclude group: 'commons-codec'
+  }
   compile 'org.apache.commons:commons-collections4:4.0'
   provided 'com.google.guava:guava:18.0'
+  provided 'commons-codec:commons-codec:1.2'
 }
 
 shadowJar {
