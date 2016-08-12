@@ -12,8 +12,8 @@ Then build:
 ### building with docker
 
 mkdir libs
-docker build -t seed_provider .
-docker run --rm -i -t -v `pwd`/libs:/build/libs seed_provider grandle jar
+docker build -t seed_provider_builder .
+docker run --rm -i -t -v `pwd`/libs:/build/libs seed_provider_builder grandle jar
 
 ### Configuration
 #### Generic
