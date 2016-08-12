@@ -9,6 +9,12 @@ Then build:
     gradle shadowJar
     gradle jar
 
+### building with docker
+
+mkdir libs
+docker build -t seed_provider .
+docker run --rm -i -t -v `pwd`/libs:/build/libs seed_provider grandle jar
+
 ### Configuration
 #### Generic
 
