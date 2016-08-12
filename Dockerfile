@@ -8,3 +8,4 @@ RUN apt-get update \
     && echo oracle-java8-installer shared/accepted-oracle-license-v1-1 seen true | debconf-set-selections \
     && apt-get install -y oracle-java8-installer oracle-java8-set-default gradle
 WORKDIR /build
+CMD ["gradle", "jar"]

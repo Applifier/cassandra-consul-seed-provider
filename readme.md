@@ -12,7 +12,7 @@ Then build:
 ### building with docker
 
     docker build -t seed_provider_builder .
-    docker run --rm -i -t -v `pwd`:/build seed_provider_builder gradle jar
+    docker run --rm -i -t -v `pwd`:/build seed_provider_builder
 
 ### Configuration
 #### Generic
