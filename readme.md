@@ -11,9 +11,8 @@ Then build:
 
 ### building with docker
 
-    mkdir libs
     docker build -t seed_provider_builder .
-    docker run --rm -i -t -v `pwd`/libs:/build/libs seed_provider_builder gradle jar
+    docker run --rm -i -t -v `pwd`:/build seed_provider_builder gradle jar
 
 ### Configuration
 #### Generic
