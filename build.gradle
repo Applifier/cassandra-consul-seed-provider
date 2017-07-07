@@ -27,7 +27,7 @@ sourceSets {
     compileClasspath += configurations.provided
   }
 }
-project.ext.cassversion = '3.10'
+project.ext.cassversion = '3.11.0'
 
 dependencies {
   provided "org.apache.cassandra:cassandra-all:${cassversion}"
